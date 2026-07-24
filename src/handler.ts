@@ -3,6 +3,7 @@ import { CloudWatchLogsClient } from "@aws-sdk/client-cloudwatch-logs";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
+import { SSMClient } from "@aws-sdk/client-ssm";
 import OpenAI from "openai";
 import { z } from "zod";
 import { generateDailyReport } from "./application/generate-daily-report.js";
@@ -10,6 +11,7 @@ import { CloudWatchLogsReader } from "./adapters/cloudwatch-logs-reader.js";
 import { DynamoDbRunStore } from "./adapters/dynamodb-run-store.js";
 import { OpenAiReportWriter } from "./adapters/openai-report-writer.js";
 import { loadSecrets } from "./adapters/secrets.js";
+import { loadDetectorRules } from "./adapters/parameter-store.js";
 import { SlackPublisher } from "./adapters/slack-publisher.js";
 import { loadConfig } from "./config.js";
 import { previousKstDay } from "./domain/report-window.js";
@@ -21,6 +23,9 @@ export async function handler(event: EventBridgeEvent<string, unknown>) {
   const detail = DetailSchema.parse(event.detail ?? {});
   const reportDate = detail.reportDate ?? previousKstDay(new Date()).reportDate;
   const secrets = await loadSecrets(new SecretsManagerClient({ region: config.AWS_REGION }), config.SECRET_ID);
+  const detectorRules = await loadDetectorRules(
+    new SSMClient({ region: config.AWS_REGION }), config.DETECTOR_RULES_PARAMETER_NAME
+  );
   const result = await generateDailyReport({ reportDate }, {
     logsReader: new CloudWatchLogsReader(
       new CloudWatchLogsClient({ region: config.AWS_REGION }), config.LOG_GROUP_NAMES.split(",").map((value) => value.trim())
@@ -29,8 +34,8 @@ export async function handler(event: EventBridgeEvent<string, unknown>) {
       DynamoDBDocumentClient.from(new DynamoDBClient({ region: config.AWS_REGION })), config.RUN_TABLE_NAME
     ),
     reportWriter: new OpenAiReportWriter(new OpenAI({ apiKey: secrets.openaiApiKey }), config.OPENAI_MODEL),
-    publisher: new SlackPublisher(secrets.slackBotToken, secrets.slackChannelId),
-    detectorRules: secrets.detectorRules
+    publisher: new SlackPublisher(secrets.slackBotToken, config.SLACK_CHANNEL_ID),
+    detectorRules
   });
   console.info(JSON.stringify({ event: "daily_report_completed", reportDate, status: result.status }));
   return result;

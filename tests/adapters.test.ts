@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CloudWatchLogsReader } from "../src/adapters/cloudwatch-logs-reader.js";
 import { DynamoDbRunStore } from "../src/adapters/dynamodb-run-store.js";
 import { loadSecrets } from "../src/adapters/secrets.js";
+import { loadDetectorRules } from "../src/adapters/parameter-store.js";
 import { SlackPublisher } from "../src/adapters/slack-publisher.js";
 import { loadConfig } from "../src/config.js";
 import { windowForReportDate } from "../src/domain/report-window.js";
@@ -57,12 +58,32 @@ describe("DynamoDB 실행 저장소", () => {
 
 describe("설정과 비밀값", () => {
   it("환경변수와 Secrets Manager JSON을 검증", async () => {
-    expect(loadConfig({ LOG_GROUP_NAMES: "/example/app", RUN_TABLE_NAME: "runs", SECRET_ID: "secret" }).AWS_REGION)
+    expect(loadConfig({ LOG_GROUP_NAMES: "/example/app", RUN_TABLE_NAME: "runs", SECRET_ID: "secret",
+      SLACK_CHANNEL_ID: "C123", DETECTOR_RULES_PARAMETER_NAME: "/example/rules" }).AWS_REGION)
       .toBe("ap-northeast-2");
     const send = vi.fn().mockResolvedValue({ SecretString: JSON.stringify({
-      openaiApiKey: "a".repeat(20), slackBotToken: "x".repeat(20), slackChannelId: "C123"
+      openaiApiKey: "a".repeat(20), slackBotToken: "x".repeat(20)
     }) });
-    await expect(loadSecrets({ send } as never, "secret")).resolves.toMatchObject({ slackChannelId: "C123" });
+    await expect(loadSecrets({ send } as never, "secret")).resolves.toEqual({
+      openaiApiKey: "a".repeat(20), slackBotToken: "x".repeat(20)
+    });
+  });
+
+  it("SSM에서 Detector Rule을 조회", async () => {
+    const send = vi.fn().mockResolvedValue({ Parameter: { Value: JSON.stringify([{
+      errorCode: "QUERY_TIMEOUT", knownCause: "가상 원인", recommendedActions: ["가상 조치"]
+    }]) } });
+    await expect(loadDetectorRules({ send } as never, "/example/rules")).resolves.toHaveLength(1);
+    expect(send.mock.calls[0]?.[0].input).toEqual({ Name: "/example/rules" });
+  });
+
+  it("SSM 누락값과 잘못된 Rule을 거부", async () => {
+    await expect(loadDetectorRules({ send: vi.fn().mockResolvedValue({}) } as never, "/example/rules"))
+      .rejects.toThrow("값 누락");
+    await expect(loadDetectorRules({ send: vi.fn().mockResolvedValue({ Parameter: { Value: "not-json" } }) } as never, "/example/rules"))
+      .rejects.toThrow();
+    await expect(loadDetectorRules({ send: vi.fn().mockResolvedValue({ Parameter: { Value: "[{}]" } }) } as never, "/example/rules"))
+      .rejects.toThrow();
   });
 
   it("문자열 비밀값 누락을 거부", async () => {

@@ -12,12 +12,25 @@ Parameters:
     Description: 조회를 허용할 CloudWatch 로그 그룹 ARN 목록
   SecretId:
     Type: String
+    Description: OpenAI API key와 Slack Bot token만 보관한 secret 이름
     Default: cloudwatch-report/example
     AllowedPattern: ^[A-Za-z0-9/_+=.@-]+$
   SecretArn:
     Type: String
     Description: Lambda가 읽을 단일 Secrets Manager secret ARN
     AllowedPattern: ^arn:[A-Za-z0-9-]+:secretsmanager:[A-Za-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$
+  SlackChannelId:
+    Type: String
+    Description: 리포트를 전송할 Slack channel ID
+    AllowedPattern: ^[A-Z0-9]{3,32}$
+  DetectorRulesParameterName:
+    Type: String
+    Default: /cloudwatch-report/example/detector-rules
+    AllowedPattern: ^/[A-Za-z0-9_.@/-]+$
+  DetectorRulesParameterArn:
+    Type: String
+    Description: Detector Rule을 보관한 SSM parameter ARN
+    AllowedPattern: ^arn:[A-Za-z0-9-]+:ssm:[A-Za-z0-9-]+:[0-9]{12}:parameter/[A-Za-z0-9_.@/-]+$
   OpenAiModel:
     Type: String
     Default: gpt-4.1-mini
@@ -65,6 +78,8 @@ Resources:
           LOG_GROUP_NAMES: !Ref LogGroupNames
           RUN_TABLE_NAME: !Ref ReportRuns
           SECRET_ID: !Ref SecretId
+          SLACK_CHANNEL_ID: !Ref SlackChannelId
+          DETECTOR_RULES_PARAMETER_NAME: !Ref DetectorRulesParameterName
           OPENAI_MODEL: !Ref OpenAiModel
       Events:
         DailySchedule:
@@ -83,6 +98,9 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource: !Ref SecretArn
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Ref DetectorRulesParameterArn
             - Effect: Allow
               Action: [dynamodb:PutItem, dynamodb:UpdateItem]
               Resource: !GetAtt ReportRuns.Arn

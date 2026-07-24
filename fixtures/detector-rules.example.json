@@ -1,0 +1,10 @@
+[
+  {
+    "errorCode": "UPSTREAM_TIMEOUT",
+    "service": "example-service",
+    "knownCause": "가상 upstream 응답 지연",
+    "recommendedActions": ["가상 provider 상태 확인"],
+    "warningThreshold": 5,
+    "criticalThreshold": 20
+  }
+]

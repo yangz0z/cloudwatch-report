@@ -42,6 +42,37 @@ CloudWatch 원문, stack trace, request/response body, 사용자 식별자 및 c
 - OpenAI Project API key
 - `chat:write` 권한을 가진 Slack Bot token
 
+로컬 fixture 테스트에는 AWS 계정, Docker, OpenAI key, Slack token이 필요하지 않다.
+
+## 안전한 로컬 실행
+
+```bash
+npm install
+npm run local -- --report-date 2030-01-14
+```
+
+기본적으로 다음 합성 fixture를 사용한다.
+
+- `fixtures/events.example.json`
+- `fixtures/detector-rules.example.json`
+
+실행 결과는 Slack에 보내지 않고 stdout에 JSON 한 줄로 출력한다. AWS SDK, OpenAI, Slack 네트워크 호출도 발생하지 않는다.
+
+```json
+{"messageId":"local-2030-01-14","reportDate":"2030-01-14","text":"..."}
+```
+
+다른 합성 fixture를 사용하려면 경로를 명시한다.
+
+```bash
+npm run local -- \
+  --report-date 2030-01-14 \
+  --events fixtures/events.example.json \
+  --rules fixtures/detector-rules.example.json
+```
+
+실제 운영 로그나 credential을 fixture에 넣거나 커밋하지 않는다. `sam local invoke`는 운영 AWS 어댑터를 실행하므로 이 로컬 fixture 명령과 목적이 다르다.
+
 ## 검증
 
 ```bash
@@ -52,16 +83,46 @@ sam validate --lint
 sam build
 ```
 
-## 비밀값과 Detector Rule
+## 준비할 값
 
-AWS Secrets Manager에 다음 형태의 JSON을 저장한다. 이 파일을 저장소에 만들거나 커밋하지 않는다.
+### OpenAI API key
+
+1. [OpenAI Platform API keys](https://platform.openai.com/settings/organization/api-keys)에서 이 앱 전용 Project/API key 생성
+2. [Usage](https://platform.openai.com/usage)와 Project 설정에서 사용량 확인 및 예산 경보 구성
+3. 발급된 key는 코드, `.env`, shell history, Git 저장소에 기록하지 않고 AWS Secrets Manager에만 저장
+
+OpenAI 공식 [production best practices](https://developers.openai.com/api/docs/guides/production-best-practices#api-keys)도 key를 코드나 공개 저장소에 두지 말고 secret 관리 서비스로 주입하도록 권장한다.
+
+### Slack Bot token과 channel ID
+
+1. [Slack App 설정](https://api.slack.com/apps)에서 새 앱 생성
+2. `OAuth & Permissions` → `Bot Token Scopes`에서 `chat:write` 추가
+3. `Install to Workspace` 또는 `Reinstall to Workspace` 실행
+4. `Bot User OAuth Token`의 `xoxb-` token 확인
+5. 리포트 대상 채널에서 `/invite @앱이름`으로 Bot 초대
+6. 채널 상세 화면에서 channel ID 복사
+
+Slack 공식 [앱 설정 가이드](https://docs.slack.dev/app-management/quickstart-app-settings/)에 따르면 `chat:write`가 메시지 전송 권한이며, Bot이 채널에 참여하지 않는다면 별도 `chat:write.public` 권한이 필요할 수 있다. 이 앱은 최소 권한을 위해 Bot을 대상 채널에 직접 초대하는 방식을 권장한다.
+
+## AWS 설정
+
+### Secrets Manager
+
+앱 전용 secret `/cloudwatch-report/prod/credentials`를 만들고 credential 두 개만 저장한다. AWS Console에서 Secrets Manager → `Store a new secret` → `Other type of secret` → Key/value 방식으로 입력하는 것이 shell history 노출을 피하기 쉽다.
 
 ```json
 {
   "openaiApiKey": "replace-at-deploy-time",
-  "slackBotToken": "replace-at-deploy-time",
-  "slackChannelId": "replace-at-deploy-time",
-  "detectorRules": [
+  "slackBotToken": "replace-at-deploy-time"
+}
+```
+
+### SSM Parameter Store
+
+`/cloudwatch-report/prod/detector-rules`라는 `String` parameter를 만들고 Detector Rule JSON만 저장한다.
+
+```json
+[
     {
       "errorCode": "UPSTREAM_TIMEOUT",
       "service": "example-service",
@@ -72,11 +133,22 @@ AWS Secrets Manager에 다음 형태의 JSON을 저장한다. 이 파일을 저�
       "warningThreshold": 5,
       "criticalThreshold": 20
     }
-  ]
-}
+]
 ```
 
-실제 조직의 오류 코드·원인·조치가 운영정보라면 별도 비공개 설정으로만 관리한다. credential과 비밀이 아닌 규칙을 더 엄격히 분리하려면 Detector Rule을 SSM Parameter Store 또는 AWS AppConfig로 옮길 수 있다.
+AWS 공식 문서의 [Parameter Store parameter 생성 방법](https://docs.aws.amazon.com/systems-manager/latest/userguide/param-create-cli.html)에 따라 Console 또는 AWS CLI로 생성할 수 있다. 현재 앱은 `String` parameter만 지원한다. 규칙을 비밀로 취급해야 한다면 별도 설계로 `SecureString`, `WithDecryption`, 제한된 KMS 복호화 권한을 함께 추가해야 한다.
+
+Detector Rule의 원인·조치와 구조화 로그의 service·provider·operation·endpoint·errorCode는 OpenAI 및 Slack으로 전달된다. 외부 공유 승인을 받은 비민감 값만 사용하고, 내부 hostname·사용자 ID·credential·자유 형식 오류 원문을 넣지 않는다.
+
+### Lambda 환경변수
+
+SAM이 배포 시 다음 값을 Lambda에 주입한다.
+
+- `SLACK_CHANNEL_ID`: 대상 channel ID
+- `DETECTOR_RULES_PARAMETER_NAME`: SSM parameter 이름
+- `LOG_GROUP_NAMES`: 조회할 로그 그룹 이름
+- `RUN_TABLE_NAME`: 생성된 DynamoDB 테이블 이름
+- `OPENAI_MODEL`: 사용할 OpenAI 모델
 
 ## 배포
 
@@ -89,8 +161,11 @@ sam deploy --guided
 
 - `LogGroupNames`: 쉼표로 구분한 로그 그룹 이름
 - `LogGroupArns`: IAM에서 조회를 허용할 로그 그룹 ARN 목록
-- `SecretId`: credential과 Detector Rule을 보관한 secret ID
+- `SecretId`: credential만 보관한 secret ID
 - `SecretArn`: Lambda가 읽을 단일 secret의 전체 ARN
+- `SlackChannelId`: 대상 Slack channel ID
+- `DetectorRulesParameterName`: Detector Rule SSM parameter 이름
+- `DetectorRulesParameterArn`: Lambda가 읽을 단일 parameter ARN
 - `OpenAiModel`: 사용할 Structured Outputs 지원 모델
 - `AlarmTopicArn`: 선택적 실패 알람 SNS topic
 
