@@ -1,0 +1,114 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: CloudWatch AI 일일 Slack 리포터
+
+Parameters:
+  LogGroupNames:
+    Type: String
+    Description: 쉼표로 구분한 CloudWatch 로그 그룹 이름
+    AllowedPattern: ^/[A-Za-z0-9._/#-]+(,/[A-Za-z0-9._/#-]+)*$
+  LogGroupArns:
+    Type: CommaDelimitedList
+    Description: 조회를 허용할 CloudWatch 로그 그룹 ARN 목록
+  SecretId:
+    Type: String
+    Default: cloudwatch-report/example
+    AllowedPattern: ^[A-Za-z0-9/_+=.@-]+$
+  SecretArn:
+    Type: String
+    Description: Lambda가 읽을 단일 Secrets Manager secret ARN
+    AllowedPattern: ^arn:[A-Za-z0-9-]+:secretsmanager:[A-Za-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$
+  OpenAiModel:
+    Type: String
+    Default: gpt-4.1-mini
+  AlarmTopicArn:
+    Type: String
+    Default: ""
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    Timeout: 120
+    MemorySize: 512
+    Tracing: Active
+
+Resources:
+  ReportRuns:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: reportDate
+          AttributeType: S
+      KeySchema:
+        - AttributeName: reportDate
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+
+  DailyReportFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints: [src/handler.ts]
+        Format: esm
+        Minify: true
+        Sourcemap: false
+        Target: es2022
+    Properties:
+      Handler: handler.handler
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          LOG_GROUP_NAMES: !Ref LogGroupNames
+          RUN_TABLE_NAME: !Ref ReportRuns
+          SECRET_ID: !Ref SecretId
+          OPENAI_MODEL: !Ref OpenAiModel
+      Events:
+        DailySchedule:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0 9 * * ? *)
+            ScheduleExpressionTimezone: Asia/Seoul
+            RetryPolicy:
+              MaximumRetryAttempts: 2
+              MaximumEventAgeInSeconds: 3600
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [logs:StartQuery, logs:GetQueryResults, logs:StopQuery]
+              Resource: !Ref LogGroupArns
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref SecretArn
+            - Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: !GetAtt ReportRuns.Arn
+
+  DailyReportFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: CloudWatch 일일 리포터 Lambda 실패
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref DailyReportFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmTopic, [!Ref AlarmTopicArn], !Ref AWS::NoValue]
+
+Conditions:
+  HasAlarmTopic: !Not [!Equals [!Ref AlarmTopicArn, ""]]
+
+Outputs:
+  FunctionName:
+    Value: !Ref DailyReportFunction
+  RunTableName:
+    Value: !Ref ReportRuns
