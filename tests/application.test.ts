@@ -15,15 +15,22 @@ const base = () => ({
 describe("일일 리포트 유스케이스", () => {
   it("AI 실패 시 fallback을 전송", async () => {
     const dependencies = base();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     dependencies.reportWriter.write.mockRejectedValue(new Error("unavailable"));
     const result = await generateDailyReport({ reportDate: "2030-01-14" }, dependencies);
     expect(result).toMatchObject({ status: "sent", fallbackCount: 1 });
     expect(dependencies.publisher.publish.mock.calls[0]?.[0]).toContain("QUERY_TIMEOUT");
+    expect(dependencies.publisher.publish.mock.calls[0]?.[0]).toContain("AI 분석 실패 — 상위 1건을 기본 리포트로 대체");
+    expect(warning).toHaveBeenCalledWith(JSON.stringify({
+      event: "openai_report_fallback", reportDate: "2030-01-14", fallbackCount: 1
+    }));
+    expect(warning.mock.calls.flat().join(" ")).not.toContain("unavailable");
     expect(dependencies.logsReader.readEvents).toHaveBeenCalledTimes(2);
     const currentWindow = dependencies.logsReader.readEvents.mock.calls[0]?.[0];
     const baselineWindow = dependencies.logsReader.readEvents.mock.calls[1]?.[0];
     expect(currentWindow).toMatchObject({ startMs: Date.parse("2030-01-13T15:00:00Z"), endMs: Date.parse("2030-01-14T15:00:00Z") });
     expect(baselineWindow).toMatchObject({ startMs: Date.parse("2030-01-06T15:00:00Z"), endMs: Date.parse("2030-01-13T15:00:00Z") });
+    warning.mockRestore();
   });
   it("같은 날짜를 수동 재실행하면 다시 전송", async () => {
     const dependencies = base();
@@ -40,6 +47,7 @@ describe("일일 리포트 유스케이스", () => {
     await generateDailyReport({ reportDate: "2030-01-14" }, dependencies);
     expect(dependencies.reportWriter.write).toHaveBeenCalledTimes(1);
     expect(dependencies.reportWriter.write.mock.calls[0]?.[0]).toHaveLength(3);
+    expect(dependencies.publisher.publish.mock.calls[0]?.[0]).not.toContain("AI 분석 실패");
   });
   it("오류가 없으면 정상 메시지를 전송", async () => {
     const dependencies = base();

@@ -35,8 +35,13 @@ export async function generateDailyReport(input: { readonly reportDate: string }
   } catch {
     fallbackCount = selected.length;
     sections = selected.map(fallbackReport);
+    console.warn(JSON.stringify({
+      event: "openai_report_fallback", reportDate: input.reportDate, fallbackCount
+    }));
   }
-  const text = [`📊 ${input.reportDate} CloudWatch 일일 리포트 — ${summary}`, ...sections]
+  const fallbackNotice = fallbackCount > 0
+    ? [`⚠️ AI 분석 실패 — 상위 ${fallbackCount}건을 기본 리포트로 대체`] : [];
+  const text = [`📊 ${input.reportDate} CloudWatch 일일 리포트 — ${summary}`, ...fallbackNotice, ...sections]
     .join("\n\n---\n\n").slice(0, 12_000);
   await dependencies.publisher.publish(text, input.reportDate);
   return { status: "sent" as const, reportDate: input.reportDate, fallbackCount };
