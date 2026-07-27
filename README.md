@@ -10,12 +10,12 @@ AWS CloudWatch Logs의 구조화된 오류를 매일 집계하고, 결정적 규
 2. Logs Insights가 전날과 직전 7일의 구조화된 `ERROR`·`FATAL` 이벤트를 안전한 필드로만 집계
 3. `service + provider + operation + endpoint + errorCode`별 Incident와 7일 일평균 생성
 4. Fatal·고위험 식별자·증가율·빈도를 결정적으로 평가해 상위 3개 선별
-5. 외부에서 주입한 Detector Rule로 known cause, 권장 조치, 심각도 임계값 적용
-6. OpenAI Structured Outputs로 한국어 문장 생성 후 원 Incident와 재검증
+5. SSM 카탈로그, 표준 HTTP 의미 순서로 문제·예측 원인·영향·조치 근거 보강
+6. 상위 3건을 OpenAI Structured Outputs 한 번으로 분석하고 미등록 오류는 보수적 가설로 표시
 7. AI 호출 또는 검증 실패 시 결정적 fallback 리포트 전송
 8. Scheduler와 Lambda 비동기 호출의 자동 재시도를 끄고 매일 한 번만 예약 시도
 
-일일 선별은 특정 공급자나 오류 코드에 종속되지 않는다. 기본적으로 동일 오류 20건 이상을 Warning으로 보고하며, 7일 일평균보다 3배 이상 증가한 5건 이상의 오류도 Warning으로 올린다. `Fatal`, 7일 평균보다 5배 이상 증가한 10건 이상의 오류, 또는 안전하게 정규화된 식별자에서 데이터 손상·보안·deadlock·spool/quarantine 실패와 같은 고위험 신호가 확인되면 Critical로 판정한다. 고위험 신호·증가율·빈도 점수 순으로 상위 3건만 상세 보고하고, 나머지는 Critical·Warning 후보 수와 제외·후순위 건수로 표시한다. 임계값과 명시적 노이즈 제외는 SSM Detector Rule에서 오류별로 조정할 수 있다. OpenAI는 선별이나 심각도 판정을 하지 않고 선택된 Incident를 문장화하는 역할만 담당한다.
+일일 선별은 특정 공급자나 오류 코드에 종속되지 않는다. 기본적으로 동일 오류 20건 이상을 Warning으로 보고하며, 7일 일평균보다 3배 이상 증가한 5건 이상의 오류도 Warning으로 올린다. `Fatal`, 7일 평균보다 5배 이상 증가한 10건 이상의 오류, 또는 안전하게 정규화된 식별자에서 데이터 손상·보안·deadlock·spool/quarantine 실패와 같은 고위험 신호가 확인되면 Critical로 판정한다. 고위험 신호·증가율·빈도 점수 순으로 상위 3건만 상세 보고하고, 나머지는 Critical·Warning 후보 수와 제외·후순위 건수로 표시한다. 임계값과 명시적 노이즈 제외는 SSM Detector Rule에서 오류별로 조정할 수 있다. OpenAI는 선별이나 심각도 판정을 하지 않는다. 카탈로그 또는 표준 프로토콜 근거는 변경할 수 없고, 미등록 오류에만 최대 medium confidence의 가설을 제안한다. 분석 지침은 `src/prompts/incident-analysis.instructions.md`에서 관리하며 Lambda 번들에 포함된다.
 
 CloudWatch 원문, stack trace, request/response body, 사용자 식별자 및 credential은 OpenAI나 Slack으로 전달하지 않는다.
 
@@ -44,7 +44,7 @@ CloudWatch 원문, stack trace, request/response body, 사용자 식별자 및 c
 - OpenAI Project API key
 - `chat:write` 권한을 가진 Slack Bot token
 
-로컬 fixture 테스트에는 AWS 계정, Docker, OpenAI key, Slack token이 필요하지 않다.
+로컬 fixture 테스트에는 AWS 계정, Docker, OpenAI key, Slack token이 필요하지 않다. 운영 시크릿을 로컬 파일이나 `.env`로 복사할 필요도 없다.
 
 ## 안전한 로컬 실행
 
@@ -121,7 +121,7 @@ Slack 공식 [앱 설정 가이드](https://docs.slack.dev/app-management/quicks
 
 ### SSM Parameter Store
 
-`/cloudwatch-report/prod/detector-rules`라는 `String` parameter를 만들고 Detector Rule JSON만 저장한다.
+`/cloudwatch-report/prod/detector-rules`라는 `String` parameter를 만들고 Detector Rule JSON만 저장한다. 기존 v1 배열과 근거 정보를 포함한 v2 카탈로그를 모두 읽을 수 있다. 기존 Lambda가 v2를 읽지 못하므로 코드 배포가 완료되기 전에는 운영 parameter를 v2로 바꾸지 않는다.
 
 ```json
 [
@@ -137,6 +137,28 @@ Slack 공식 [앱 설정 가이드](https://docs.slack.dev/app-management/quicks
       "excludeFromDailyReport": false
     }
 ]
+```
+
+v2는 다음 구조다. `sourceEvidence`는 카탈로그 검토 근거로만 보관하며 OpenAI와 Slack에는 전달하지 않는다.
+
+```json
+{
+  "schemaVersion": 2,
+  "source": {
+    "repository": "example/repository",
+    "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "generatedAt": "2030-01-15T00:00:00.000Z"
+  },
+  "rules": [{
+    "match": { "errorCode": "UPSTREAM_TIMEOUT", "service": "example-service" },
+    "problem": "외부 연동 응답 지연",
+    "likelyCauses": ["외부 API 응답 시간 초과"],
+    "impact": "일부 요청 지연 또는 실패",
+    "recommendedActions": ["외부 API 상태와 응답 시간 확인"],
+    "confidence": "high",
+    "sourceEvidence": [{ "path": "src/example.ts", "rationale": "오류 변환 코드 확인" }]
+  }]
+}
 ```
 
 AWS 공식 문서의 [Parameter Store parameter 생성 방법](https://docs.aws.amazon.com/systems-manager/latest/userguide/param-create-cli.html)에 따라 Console 또는 AWS CLI로 생성할 수 있다. 현재 앱은 `String` parameter만 지원한다. 규칙을 비밀로 취급해야 한다면 별도 설계로 `SecureString`, `WithDecryption`, 제한된 KMS 복호화 권한을 함께 추가해야 한다.

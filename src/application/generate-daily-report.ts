@@ -28,10 +28,14 @@ export async function generateDailyReport(input: { readonly reportDate: string }
     return { status: "sent" as const, reportDate: input.reportDate, fallbackCount: 0 };
   }
   let fallbackCount = 0;
-  const sections = await Promise.all(selected.map(async (incident) => {
-    try { return await dependencies.reportWriter.write(incident); }
-    catch { fallbackCount += 1; return fallbackReport(incident); }
-  }));
+  let sections: readonly string[];
+  try {
+    sections = await dependencies.reportWriter.write(selected);
+    if (sections.length !== selected.length) throw new Error("리포트 개수 불일치");
+  } catch {
+    fallbackCount = selected.length;
+    sections = selected.map(fallbackReport);
+  }
   const text = [`📊 ${input.reportDate} CloudWatch 일일 리포트 — ${summary}`, ...sections]
     .join("\n\n---\n\n").slice(0, 12_000);
   await dependencies.publisher.publish(text, input.reportDate);

@@ -11,7 +11,9 @@ export function fallbackReport(incident: Incident): string {
     `• 7일 일평균: ${incident.baselineDailyAverage}건 / 전일 증가: ${incident.increaseRatio}배\n` +
     `• 분류: ${incident.category}\n• 요청 경로: ${incident.endpoint}\n` +
     `• 외부 서비스: ${incident.provider}\n• 오류 코드: ${incident.errorCode}\n` +
-    `• 오류 원인: ${incident.knownCause}\n` +
+    `• 문제: ${incident.problem}\n` +
+    `• 예측 원인: ${incident.likelyCauses.length > 0 ? incident.likelyCauses.join(", ") : "추가 근거 부족"} (${incident.confidence})\n` +
+    `• 사용자 영향: ${incident.impact}\n` +
     `• 권장 조치: ${incident.recommendedActions.join(", ")}\n\n` +
     `근거: 동일한 구조화 오류 ${incident.count}건`;
 }

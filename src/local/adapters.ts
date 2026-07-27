@@ -8,7 +8,7 @@ export class FixtureLogsReader implements LogsReader {
 }
 
 export class DeterministicReportWriter implements ReportWriter {
-  async write(incident: Incident): Promise<string> { return fallbackReport(incident); }
+  async write(incidents: readonly Incident[]): Promise<readonly string[]> { return incidents.map(fallbackReport); }
 }
 
 export class JsonPublisher implements Publisher {

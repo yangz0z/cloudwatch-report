@@ -8,7 +8,7 @@ const aggregate = {
 };
 const base = () => ({
   logsReader: { readEvents: vi.fn().mockResolvedValue([aggregate]) },
-  reportWriter: { write: vi.fn().mockResolvedValue("가상 리포트") }, publisher: { publish: vi.fn().mockResolvedValue("123.456") },
+  reportWriter: { write: vi.fn().mockResolvedValue(["가상 리포트"]) }, publisher: { publish: vi.fn().mockResolvedValue("123.456") },
   detectorRules: []
 });
 
@@ -30,6 +30,16 @@ describe("일일 리포트 유스케이스", () => {
     await generateDailyReport({ reportDate: "2030-01-14" }, dependencies);
     await generateDailyReport({ reportDate: "2030-01-14" }, dependencies);
     expect(dependencies.publisher.publish).toHaveBeenCalledTimes(2);
+  });
+  it("선별된 상위 3건을 AI에 한 번만 전달", async () => {
+    const dependencies = base();
+    dependencies.logsReader.readEvents.mockResolvedValue(Array.from({ length: 4 }, (_, index) => ({
+      ...aggregate, operation: `read_items_${index}`, errorCode: `QUERY_TIMEOUT_${index}`, count: 100 - index
+    })));
+    dependencies.reportWriter.write.mockResolvedValue(["리포트 1", "리포트 2", "리포트 3"]);
+    await generateDailyReport({ reportDate: "2030-01-14" }, dependencies);
+    expect(dependencies.reportWriter.write).toHaveBeenCalledTimes(1);
+    expect(dependencies.reportWriter.write.mock.calls[0]?.[0]).toHaveLength(3);
   });
   it("오류가 없으면 정상 메시지를 전송", async () => {
     const dependencies = base();

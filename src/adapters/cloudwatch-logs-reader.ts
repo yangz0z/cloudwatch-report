@@ -11,9 +11,10 @@ export const CLOUDWATCH_QUERY = `fields @timestamp,
   regex_replace(coalesce(\`integration.name\`, integration_name, "internal"), "[^A-Za-z0-9._:-]", "_") as provider,
   regex_replace(coalesce(\`event.name\`, event_name, "unclassified-operation"), "[^A-Za-z0-9._:-]", "_") as operation,
   "/redacted" as endpoint,
-  regex_replace(coalesce(\`error.classification\`, error_classification, "UNCLASSIFIED_ERROR"), "[^A-Za-z0-9._:-]", "_") as errorCode
+  regex_replace(coalesce(\`error.classification\`, error_classification, "UNCLASSIFIED_ERROR"), "[^A-Za-z0-9._:-]", "_") as errorCode,
+  coalesce(\`http.response.status_code\`, http_status, 0) as httpStatus
 | filter toupper(@@l) in ["ERROR", "FATAL"] or ispresent(\`error.classification\`) or ispresent(error_classification) or ispresent(\`integration.failure\`) or ispresent(integration_failure)
-| stats count(*) as failureCount, sum(if(toupper(@@l) = "FATAL", 1, 0)) as fatalCount, min(@timestamp) as firstSeen, max(@timestamp) as lastSeen by service, category, provider, operation, endpoint, errorCode
+| stats count(*) as failureCount, sum(if(toupper(@@l) = "FATAL", 1, 0)) as fatalCount, min(@timestamp) as firstSeen, max(@timestamp) as lastSeen by service, category, provider, operation, endpoint, errorCode, httpStatus
 | sort fatalCount desc, failureCount desc
 | limit 10000`;
 
@@ -51,11 +52,13 @@ function parseResult(fields: readonly { field?: string | undefined; value?: stri
   if (!Number.isInteger(count) || count < 1) throw new Error("Logs Insights 집계값 오류");
   const fatalCount = Number(values.fatalCount);
   if (!Number.isInteger(fatalCount) || fatalCount < 0 || fatalCount > count) throw new Error("Logs Insights Fatal 집계값 오류");
+  const httpStatus = Number(values.httpStatus);
   return {
     level: fatalCount > 0 ? "fatal" : "error",
     service: required(values.service, "service"), category: required(values.category, "category"),
     provider: required(values.provider, "provider"), operation: required(values.operation, "operation"),
-    endpoint: required(values.endpoint, "endpoint"), errorCode: required(values.errorCode, "errorCode"), count,
+    endpoint: required(values.endpoint, "endpoint"), errorCode: required(values.errorCode, "errorCode"),
+    ...(Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? { httpStatus } : {}), count,
     firstSeenKst: toKst(values.firstSeen), lastSeenKst: toKst(values.lastSeen)
   };
 }

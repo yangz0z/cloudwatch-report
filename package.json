@@ -7,7 +7,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "esbuild src/handler.ts src/local-cli.ts --bundle --platform=node --target=node22 --format=esm --outdir=dist --loader:.md=text",
     "local": "npm run build --silent && node dist/local-cli.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

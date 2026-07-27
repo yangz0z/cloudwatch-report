@@ -8,7 +8,8 @@ import { DeterministicReportWriter, FixtureLogsReader, JsonPublisher } from "./a
 const EventSchema = z.object({
   level: z.enum(["error", "fatal"]).optional(),
   service: z.string(), category: z.string(), provider: z.string(), operation: z.string(), endpoint: z.string(),
-  errorCode: z.string(), count: z.number().int().positive(), firstSeenKst: z.string(), lastSeenKst: z.string()
+  errorCode: z.string(), httpStatus: z.number().int().min(100).max(599).optional(), count: z.number().int().positive(),
+  firstSeenKst: z.string(), lastSeenKst: z.string()
 }).strict();
 
 export interface LocalOptions { readonly reportDate: string; readonly eventsFile: string; readonly rulesFile: string; }
