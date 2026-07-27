@@ -18,17 +18,16 @@ CloudWatch 원문, stack trace, request/response body, 사용자 식별자 및 c
 
 ## 기대하는 구조화 로그
 
-애플리케이션 로그에는 다음과 같은 비식별 필드를 제공해야 한다. 예시는 모두 가상 데이터다.
+애플리케이션 로그에는 다음과 같은 비식별 필드를 제공해야 한다. 예시는 모두 가상 데이터다. 현재 쿼리는 OpenTelemetry/Serilog 로그와의 호환을 위해 `service.name`, `frontend.service.name`, `error.classification`, `integration.name`, `event.name` 및 일부 snake_case 별칭을 읽는다. 요청 경로는 사용자 식별 정보 유출을 막기 위해 조회하지 않고 `/redacted`로 집계한다.
 
 ```json
 {
-  "level": "ERROR",
-  "service": "example-service",
-  "category": "external_dependency",
-  "provider": "example-provider",
-  "operation": "fetch_resource",
-  "endpoint": "/v1/resources",
-  "errorCode": "UPSTREAM_TIMEOUT"
+  "@l": "Error",
+  "service.name": "example-service",
+  "error.classification": "UPSTREAM_TIMEOUT",
+  "integration.name": "example-provider",
+  "event.name": "fetch_resource",
+  "integration.failure": true
 }
 ```
 
@@ -36,7 +35,7 @@ CloudWatch 원문, stack trace, request/response body, 사용자 식별자 및 c
 
 ## 요구 사항
 
-- Node.js 22 이상
+- Node.js 22.13 이상
 - AWS SAM CLI
 - AWS 배포 권한
 - OpenAI Project API key

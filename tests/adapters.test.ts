@@ -23,6 +23,17 @@ describe("CloudWatch Logs 어댑터", () => {
     await expect(reader.readEvents(windowForReportDate("2030-01-14"))).resolves.toEqual([expect.objectContaining({
       service: "example-service", errorCode: "QUERY_TIMEOUT", count: 42
     })]);
+    const queryInput = send.mock.calls[0]?.[0].input;
+    expect(queryInput.queryString).toContain("coalesce(`service.name`, `frontend.service.name`");
+    expect(queryInput.queryString).toContain("coalesce(`integration.name`, integration_name");
+    expect(queryInput.queryString).toContain("coalesce(`event.name`, event_name, ActionName");
+    expect(queryInput.queryString).toContain("ispresent(`integration.failure`)");
+    expect(queryInput.queryString).toContain("ispresent(integration_failure)");
+    expect(queryInput.queryString).toContain('"/redacted" as endpoint');
+    expect(queryInput.queryString).not.toMatch(/errorCode\n.*event_name/);
+    expect(queryInput.queryString).not.toContain("@message");
+    expect(queryInput.queryString).not.toContain("`url.path`");
+    expect(queryInput.queryString).not.toContain("RequestPath");
   });
 
   it("queryId 누락과 실패 상태를 거부", async () => {

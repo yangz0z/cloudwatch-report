@@ -5,9 +5,14 @@ import type { LogsReader } from "../application/ports.js";
 import type { EventAggregate } from "../domain/incident.js";
 import type { ReportWindow } from "../domain/report-window.js";
 
-const QUERY = `fields @timestamp, service, category, provider, operation, endpoint, errorCode
-| filter level in ["ERROR", "FATAL"] or ispresent(errorCode)
-| filter ispresent(service) and ispresent(category) and ispresent(provider) and ispresent(operation) and ispresent(endpoint) and ispresent(errorCode)
+export const CLOUDWATCH_QUERY = `fields @timestamp,
+  coalesce(\`service.name\`, \`frontend.service.name\`, "unknown-service") as service,
+  coalesce(\`error.classification\`, error_classification, "unclassified-error") as category,
+  coalesce(\`integration.name\`, integration_name, "internal") as provider,
+  coalesce(\`event.name\`, event_name, ActionName, "unclassified-operation") as operation,
+  "/redacted" as endpoint,
+  coalesce(\`error.classification\`, error_classification, "UNCLASSIFIED_ERROR") as errorCode
+| filter @l in ["Error", "Fatal"] or ispresent(\`error.classification\`) or ispresent(error_classification) or ispresent(\`integration.failure\`) or ispresent(integration_failure)
 | stats count(*) as failureCount, min(@timestamp) as firstSeen, max(@timestamp) as lastSeen by service, category, provider, operation, endpoint, errorCode
 | sort failureCount desc
 | limit 100`;
@@ -24,7 +29,7 @@ export class CloudWatchLogsReader implements LogsReader {
       logGroupNames: [...this.logGroupNames],
       startTime: Math.floor(window.startMs / 1000),
       endTime: Math.ceil(window.endMs / 1000) - 1,
-      queryString: QUERY
+      queryString: CLOUDWATCH_QUERY
     }));
     if (!started.queryId) throw new Error("Logs Insights queryId 누락");
     for (let attempt = 0; attempt < 30; attempt += 1) {
