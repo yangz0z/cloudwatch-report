@@ -10,7 +10,6 @@ const NarrativeSchema = z.object({
   impact: z.string().min(1).max(500), actions: z.array(z.string().min(1).max(300)).min(1).max(5),
   confidence: z.enum(["low", "medium", "high"]),
   causeSource: z.enum(["catalog", "standard_protocol", "ai_hypothesis", "insufficient"]),
-  evidenceUsed: z.array(z.string().min(1).max(300)).min(1).max(5),
   unknowns: z.array(z.string().min(1).max(300)).max(5),
   severity: z.enum(["info", "warning", "critical"]), eventCount: z.number().int().positive()
 }).strict();
@@ -20,14 +19,13 @@ const SENSITIVE_OUTPUT = /(?:\b(?:sk-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{
 const jsonSchema = {
   type: "object", additionalProperties: false, required: ["reports"], properties: { reports: {
     type: "array", minItems: 1, maxItems: 3, items: { type: "object", additionalProperties: false,
-      required: ["incidentId", "title", "summary", "problem", "likelyCauses", "impact", "actions", "confidence", "causeSource", "evidenceUsed", "unknowns", "severity", "eventCount"],
+      required: ["incidentId", "title", "summary", "problem", "likelyCauses", "impact", "actions", "confidence", "causeSource", "unknowns", "severity", "eventCount"],
       properties: {
         incidentId: { type: "string" }, title: { type: "string" }, summary: { type: "string" }, problem: { type: "string" },
         likelyCauses: { type: "array", minItems: 1, maxItems: 3, items: { type: "string" } }, impact: { type: "string" },
         actions: { type: "array", minItems: 1, maxItems: 5, items: { type: "string" } },
         confidence: { type: "string", enum: ["low", "medium", "high"] },
         causeSource: { type: "string", enum: ["catalog", "standard_protocol", "ai_hypothesis", "insufficient"] },
-        evidenceUsed: { type: "array", minItems: 1, maxItems: 5, items: { type: "string" } },
         unknowns: { type: "array", maxItems: 5, items: { type: "string" } },
         severity: { type: "string", enum: ["info", "warning", "critical"] }, eventCount: { type: "integer", minimum: 1 }
       }
@@ -61,7 +59,7 @@ export class OpenAiReportWriter implements ReportWriter {
       const title = `${incident.service} ${incident.operation} 오류`;
       const summary = `동일한 구조화 오류 ${incident.count}건 발생`;
       return `${label} — ${title}\n\n${summary}\n\n• 문제: ${report.problem}\n` +
-        `• 7일 일평균: ${incident.baselineDailyAverage}건 / 기준 대비: ${incident.increaseRatio}배\n` +
+        `• 7일 기준: ${incident.isNewInSevenDayWindow ? "신규 오류 (이전 7일 0건)" : `일평균 ${incident.baselineDailyAverage}건 / 기준 대비 ${incident.increaseRatio}배`}\n` +
         `• 예측 원인: ${causes} (${report.confidence})\n• 사용자 영향: ${report.impact}\n` +
         `• 권장 조치: ${report.actions.join(", ")}${unknowns}\n\n근거: 동일한 구조화 오류 ${report.eventCount}건`;
     });
@@ -74,7 +72,8 @@ function toSafeInput(incident: Incident) {
     provider: incident.provider, operation: incident.operation, endpoint: incident.endpoint, errorCode: incident.errorCode,
     httpStatus: incident.httpStatus, eventCount: incident.count, firstSeenKst: incident.firstSeenKst,
     lastSeenKst: incident.lastSeenKst, severity: incident.severity, baselineDailyAverage: incident.baselineDailyAverage,
-    increaseRatio: incident.increaseRatio, problem: incident.problem, likelyCauses: incident.likelyCauses,
+    increaseRatio: incident.increaseRatio, isNewInSevenDayWindow: incident.isNewInSevenDayWindow,
+    problem: incident.problem, likelyCauses: incident.likelyCauses,
     impact: incident.impact, recommendedActions: incident.recommendedActions, confidence: incident.confidence,
     causeSource: incident.causeSource, selectionReasons: incident.selectionReasons,
     evidence: evidenceFor(incident)
@@ -83,7 +82,6 @@ function toSafeInput(incident: Incident) {
 
 function validateReport(report: z.infer<typeof NarrativeSchema>, incident: Incident): void {
   if (report.severity !== incident.severity || report.eventCount !== incident.count) throw new Error("OpenAI 응답 근거 검증 실패");
-  if (!report.evidenceUsed.every((value) => evidenceFor(incident).includes(value))) throw new Error("OpenAI 응답 근거 검증 실패");
   if (incident.causeSource !== "unresolved") {
     if (report.causeSource !== incident.causeSource || report.problem !== incident.problem || report.impact !== incident.impact ||
         report.confidence !== incident.confidence || !report.likelyCauses.every((value) => incident.likelyCauses.includes(value)) ||
@@ -91,7 +89,7 @@ function validateReport(report: z.infer<typeof NarrativeSchema>, incident: Incid
   } else if (!["ai_hypothesis", "insufficient"].includes(report.causeSource) || report.confidence === "high") {
     throw new Error("OpenAI 가설 검증 실패");
   }
-  for (const value of [report.title, report.summary, report.problem, report.impact, ...report.likelyCauses, ...report.actions, ...report.evidenceUsed, ...report.unknowns]) {
+  for (const value of [report.title, report.summary, report.problem, report.impact, ...report.likelyCauses, ...report.actions, ...report.unknowns]) {
     if (/[<>]/.test(value) || /@(channel|here|everyone)/i.test(value) || SENSITIVE_OUTPUT.test(value) ||
         [...value].some((character) => character.charCodeAt(0) < 32)) {
       throw new Error("OpenAI 응답 Slack 안전성 검증 실패");

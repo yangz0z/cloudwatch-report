@@ -43,6 +43,7 @@ export interface Incident extends EventAggregate {
   readonly recommendedActions: readonly string[];
   readonly excludedFromDailyReport: boolean;
   readonly baselineDailyAverage: number;
+  readonly isNewInSevenDayWindow: boolean;
   readonly increaseRatio: number;
   readonly priorityScore: number;
   readonly selectionReasons: readonly string[];
@@ -79,6 +80,7 @@ export function createIncidents(
     }
     const baseline = baselineBySignature.get(signatureKey(aggregate));
     const baselineDailyAverage = baseline ? round(baseline.count / baselineDays) : 0;
+    const isNewInSevenDayWindow = baselineAggregates !== undefined && baseline === undefined;
     const increaseRatio = mergedBaseline === undefined ? 1 : round(aggregate.count / Math.max(baselineDailyAverage, 1));
     const warningThreshold = rule?.warningThreshold ?? 20;
     const criticalThreshold = rule?.criticalThreshold ?? Number.POSITIVE_INFINITY;
@@ -88,17 +90,18 @@ export function createIncidents(
     const isCriticalSpike = aggregate.count >= 10 && increaseRatio >= 5;
     const isWarningSpike = aggregate.count >= 5 && increaseRatio >= 3;
     const severity: Severity = aggregate.level === "fatal" || aggregate.count >= criticalThreshold ||
-      isCriticalSpike || hasCriticalSignal ? "critical" : aggregate.count >= warningThreshold ||
+      isCriticalSpike || hasCriticalSignal ? "critical" : isNewInSevenDayWindow || aggregate.count >= warningThreshold ||
       isWarningSpike || (hasNotableSignal && aggregate.count >= 5) ? "warning" : "info";
     const selectionReasons = Object.freeze([
       ...(aggregate.level === "fatal" ? ["fatal"] : []),
       ...(hasCriticalSignal ? ["high_risk_identifier"] : []),
+      ...(isNewInSevenDayWindow ? ["new_in_seven_day_window"] : []),
       ...(isCriticalSpike || isWarningSpike ? ["seven_day_spike"] : []),
       ...(aggregate.count >= warningThreshold ? ["high_frequency"] : []),
       ...(hasNotableSignal ? ["notable_identifier"] : [])
     ]);
     const priorityScore = round((aggregate.level === "fatal" ? 10_000 : 0) +
-      (hasCriticalSignal ? 1_000 : 0) + (hasNotableSignal ? 200 : 0) +
+      (hasCriticalSignal ? 6_000 : 0) + (isNewInSevenDayWindow ? 3_000 : 0) + (hasNotableSignal ? 200 : 0) +
       Math.min(increaseRatio, 20) * 100 + Math.log10(aggregate.count + 1) * 20 + severityRank(severity) * 10);
     const grounding = rule ? {
       problem: rule.problem ?? "분류된 오류 발생",
@@ -123,6 +126,7 @@ export function createIncidents(
       recommendedActions: Object.freeze(grounding.actions),
       excludedFromDailyReport: rule?.excludeFromDailyReport ?? false,
       baselineDailyAverage,
+      isNewInSevenDayWindow,
       increaseRatio,
       priorityScore,
       selectionReasons

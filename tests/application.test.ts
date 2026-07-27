@@ -16,15 +16,17 @@ describe("일일 리포트 유스케이스", () => {
   it("AI 실패 시 fallback을 전송", async () => {
     const dependencies = base();
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    dependencies.reportWriter.write.mockRejectedValue(new Error("unavailable"));
+    const openAiError = new Error("sk-sensitive-value unavailable");
+    dependencies.reportWriter.write.mockRejectedValue(openAiError);
     const result = await generateDailyReport({ reportDate: "2030-01-14" }, dependencies);
     expect(result).toMatchObject({ status: "sent", fallbackCount: 1 });
     expect(dependencies.publisher.publish.mock.calls[0]?.[0]).toContain("QUERY_TIMEOUT");
     expect(dependencies.publisher.publish.mock.calls[0]?.[0]).toContain("AI 분석 실패 — 상위 1건을 기본 리포트로 대체");
-    expect(warning).toHaveBeenCalledWith(JSON.stringify({
-      event: "openai_report_fallback", reportDate: "2030-01-14", fallbackCount: 1
-    }));
-    expect(warning.mock.calls.flat().join(" ")).not.toContain("unavailable");
+    const diagnostic = JSON.parse(String(warning.mock.calls[0]?.[0]));
+    expect(diagnostic).toMatchObject({ event: "openai_report_fallback", reportDate: "2030-01-14",
+      fallbackCount: 1, reason: "unknown", errorName: "Error" });
+    expect(diagnostic.stackFrames).toEqual(expect.arrayContaining([expect.stringContaining("application.test.ts")]));
+    expect(warning.mock.calls.flat().join(" ")).not.toContain("sk-sensitive-value");
     expect(dependencies.logsReader.readEvents).toHaveBeenCalledTimes(2);
     const currentWindow = dependencies.logsReader.readEvents.mock.calls[0]?.[0];
     const baselineWindow = dependencies.logsReader.readEvents.mock.calls[1]?.[0];

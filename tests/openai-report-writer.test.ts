@@ -12,7 +12,7 @@ const reportFor = (incident: typeof incidents[number], overrides = {}) => ({
   incidentId: incident.id, title: "외부 의존성 오류", summary: `동일 오류 ${incident.count}건 발생`,
   problem: incident.problem, likelyCauses: ["외부 API의 일시적 지연 가능성"], impact: "기능 지연 가능성",
   actions: ["관련 로그와 최근 변경 사항 확인"], confidence: "medium", causeSource: "ai_hypothesis",
-  evidenceUsed: [`eventCount=${incident.count}`], unknowns: ["외부 API 응답 시간"],
+  unknowns: ["외부 API 응답 시간"],
   severity: incident.severity, eventCount: incident.count, ...overrides
 });
 const response = (reports = incidents.map((incident) => reportFor(incident))) => ({ output_text: JSON.stringify({ reports }) });
@@ -35,11 +35,6 @@ describe("OpenAI 배치 리포트 검증", () => {
     await expect(tampered.write(incidents)).rejects.toThrow("근거 검증");
     const missing = new OpenAiReportWriter({ responses: { create: vi.fn().mockResolvedValue(response([reportFor(incidents[0]!)])) } } as never, "example-model");
     await expect(missing.write(incidents)).rejects.toThrow("구성 검증");
-    const inventedEvidence = new OpenAiReportWriter({ responses: { create: vi.fn().mockResolvedValue(response([
-      reportFor(incidents[0]!, { evidenceUsed: ["내부 호스트 장애 확인"] }),
-      ...incidents.slice(1).map((incident) => reportFor(incident))
-    ])) } } as never, "example-model");
-    await expect(inventedEvidence.write(incidents)).rejects.toThrow("근거 검증");
   });
   it("미확정 오류의 high confidence와 Slack 멘션을 거부", async () => {
     const high = new OpenAiReportWriter({ responses: { create: vi.fn().mockResolvedValue(response([

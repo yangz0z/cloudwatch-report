@@ -88,6 +88,19 @@ describe("Incident", () => {
     expect(incidents[0]).toMatchObject({ errorCode: "NEW_SPIKE", baselineDailyAverage: 1, increaseRatio: 30 });
     expect(incidents[1]).toMatchObject({ errorCode: "STABLE_NOISE", baselineDailyAverage: 1000, increaseRatio: 1 });
   });
+  it("최근 7일에 없던 신규 오류를 Warning으로 올리고 반복 오류보다 우선", () => {
+    const recurring = { ...event(1_000), errorCode: "RECURRING_ERROR" };
+    const newError = { ...event(1), errorCode: "NEW_ERROR" };
+    const incidents = createIncidents("2030-01-14", [recurring, newError], [], [{ ...recurring, count: 7_000 }], 7);
+    expect(incidents[0]).toMatchObject({ errorCode: "NEW_ERROR", severity: "warning", isNewInSevenDayWindow: true });
+    expect(incidents[0]?.selectionReasons).toContain("new_in_seven_day_window");
+    expect(selectReportableIncidents(incidents)[0]?.errorCode).toBe("NEW_ERROR");
+  });
+  it("baseline 수집 결과가 없으면 신규 오류로 단정하지 않음", () => {
+    const incident = createIncidents("2030-01-14", [event(1)], [])[0];
+    expect(incident).toMatchObject({ severity: "info", isNewInSevenDayWindow: false });
+    expect(incident?.selectionReasons).not.toContain("new_in_seven_day_window");
+  });
   it("고위험 구조화 식별자는 적은 건수도 Critical로 판정", () => {
     const incident = createIncidents("2030-01-14", [{
       ...event(1), operation: "raw_body.spool_read_failed"

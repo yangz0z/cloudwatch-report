@@ -1,6 +1,7 @@
 import { createIncidents, selectReportableIncidents } from "../domain/incident.js";
 import { baselineWindowForReportDate, windowForReportDate } from "../domain/report-window.js";
 import { fallbackReport } from "../report/fallback.js";
+import { diagnoseReportError } from "../report/diagnostic-error.js";
 import type { Dependencies } from "./ports.js";
 
 export async function generateDailyReport(input: { readonly reportDate: string }, dependencies: Dependencies) {
@@ -32,11 +33,12 @@ export async function generateDailyReport(input: { readonly reportDate: string }
   try {
     sections = await dependencies.reportWriter.write(selected);
     if (sections.length !== selected.length) throw new Error("리포트 개수 불일치");
-  } catch {
+  } catch (error) {
     fallbackCount = selected.length;
     sections = selected.map(fallbackReport);
     console.warn(JSON.stringify({
-      event: "openai_report_fallback", reportDate: input.reportDate, fallbackCount
+      event: "openai_report_fallback", reportDate: input.reportDate, fallbackCount,
+      ...diagnoseReportError(error)
     }));
   }
   const fallbackNotice = fallbackCount > 0
