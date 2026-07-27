@@ -32,7 +32,7 @@ describe("OpenAI 배치 리포트 검증", () => {
     const tampered = new OpenAiReportWriter({ responses: { create: vi.fn().mockResolvedValue(response([
       reportFor(incidents[0]!, { eventCount: 99 }), ...incidents.slice(1).map((incident) => reportFor(incident))
     ])) } } as never, "example-model");
-    await expect(tampered.write(incidents)).rejects.toThrow("근거 검증");
+    await expect(tampered.write(incidents)).rejects.toThrow("건수 검증");
     const missing = new OpenAiReportWriter({ responses: { create: vi.fn().mockResolvedValue(response([reportFor(incidents[0]!)])) } } as never, "example-model");
     await expect(missing.write(incidents)).rejects.toThrow("구성 검증");
   });
@@ -42,12 +42,27 @@ describe("OpenAI 배치 리포트 검증", () => {
     ])) } } as never, "example-model");
     await expect(high.write(incidents)).rejects.toThrow("가설 검증");
     const mention = new OpenAiReportWriter({ responses: { create: vi.fn().mockResolvedValue(response([
-      reportFor(incidents[0]!, { title: "@channel 오류" }), ...incidents.slice(1).map((incident) => reportFor(incident))
+      reportFor(incidents[0]!, { problem: "@channel 오류" }), ...incidents.slice(1).map((incident) => reportFor(incident))
     ])) } } as never, "example-model");
     await expect(mention.write(incidents)).rejects.toThrow("Slack 안전성");
     const internalHost = new OpenAiReportWriter({ responses: { create: vi.fn().mockResolvedValue(response([
-      reportFor(incidents[0]!, { summary: "prod-db.internal 장애" }), ...incidents.slice(1).map((incident) => reportFor(incident))
+      reportFor(incidents[0]!, { unknowns: ["prod-db.internal 장애"] }), ...incidents.slice(1).map((incident) => reportFor(incident))
     ])) } } as never, "example-model");
     await expect(internalHost.write(incidents)).rejects.toThrow("Slack 안전성");
+  });
+  it("표준 프로토콜 Incident는 AI가 바꾼 문구 대신 코드의 확정 근거를 사용", async () => {
+    const grounded = createIncidents("2030-01-14", [{
+      service: "example-service", category: "dependency", provider: "example-provider", operation: "fetch_resource",
+      endpoint: "/v1/resources", errorCode: "UPSTREAM_ERROR", httpStatus: 500, count: 20, level: "error",
+      firstSeenKst: "2030-01-14T01:00:00+09:00", lastSeenKst: "2030-01-14T02:00:00+09:00"
+    }], [])[0]!;
+    const create = vi.fn().mockResolvedValue(response([reportFor(grounded, {
+      problem: "AI가 바꾼 문제", likelyCauses: ["AI가 바꾼 원인"], impact: "AI가 바꾼 영향",
+      actions: ["AI가 바꾼 조치"], confidence: "low", causeSource: "ai_hypothesis"
+    })]));
+    const output = await new OpenAiReportWriter({ responses: { create } } as never, "example-model").write([grounded]);
+    expect(output[0]).toContain(grounded.problem);
+    expect(output[0]).toContain(grounded.likelyCauses[0]!);
+    expect(output[0]).not.toContain("AI가 바꾼 문제");
   });
 });

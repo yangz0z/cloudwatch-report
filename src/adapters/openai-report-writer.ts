@@ -54,14 +54,18 @@ export class OpenAiReportWriter implements ReportWriter {
       if (!report || !byId.has(report.incidentId)) throw new Error("OpenAI 응답 Incident 구성 검증 실패");
       validateReport(report, incident);
       const label = report.severity === "critical" ? "🚨 Critical" : report.severity === "warning" ? "⚠️ Warning" : "ℹ️ Info";
-      const causes = report.likelyCauses.join(", ");
+      const grounded = incident.causeSource === "unresolved" ? report : {
+        problem: incident.problem, likelyCauses: incident.likelyCauses, impact: incident.impact,
+        actions: incident.recommendedActions, confidence: incident.confidence
+      };
+      const causes = grounded.likelyCauses.join(", ");
       const unknowns = report.unknowns.length > 0 ? `\n• 추가 확인: ${report.unknowns.join(", ")}` : "";
       const title = `${incident.service} ${incident.operation} 오류`;
       const summary = `동일한 구조화 오류 ${incident.count}건 발생`;
-      return `${label} — ${title}\n\n${summary}\n\n• 문제: ${report.problem}\n` +
+      return `${label} — ${title}\n\n${summary}\n\n• 문제: ${grounded.problem}\n` +
         `• 7일 기준: ${incident.isNewInSevenDayWindow ? "신규 오류 (이전 7일 0건)" : `일평균 ${incident.baselineDailyAverage}건 / 기준 대비 ${incident.increaseRatio}배`}\n` +
-        `• 예측 원인: ${causes} (${report.confidence})\n• 사용자 영향: ${report.impact}\n` +
-        `• 권장 조치: ${report.actions.join(", ")}${unknowns}\n\n근거: 동일한 구조화 오류 ${report.eventCount}건`;
+        `• 예측 원인: ${causes} (${grounded.confidence})\n• 사용자 영향: ${grounded.impact}\n` +
+        `• 권장 조치: ${grounded.actions.join(", ")}${unknowns}\n\n근거: 동일한 구조화 오류 ${report.eventCount}건`;
     });
   }
 }
@@ -81,15 +85,16 @@ function toSafeInput(incident: Incident) {
 }
 
 function validateReport(report: z.infer<typeof NarrativeSchema>, incident: Incident): void {
-  if (report.severity !== incident.severity || report.eventCount !== incident.count) throw new Error("OpenAI 응답 근거 검증 실패");
-  if (incident.causeSource !== "unresolved") {
-    if (report.causeSource !== incident.causeSource || report.problem !== incident.problem || report.impact !== incident.impact ||
-        report.confidence !== incident.confidence || !report.likelyCauses.every((value) => incident.likelyCauses.includes(value)) ||
-        !report.actions.every((value) => incident.recommendedActions.includes(value))) throw new Error("OpenAI 응답 근거 검증 실패");
-  } else if (!["ai_hypothesis", "insufficient"].includes(report.causeSource) || report.confidence === "high") {
+  if (report.severity !== incident.severity) throw new Error("OpenAI 응답 중요도 검증 실패");
+  if (report.eventCount !== incident.count) throw new Error("OpenAI 응답 건수 검증 실패");
+  if (incident.causeSource === "unresolved" &&
+      (!["ai_hypothesis", "insufficient"].includes(report.causeSource) || report.confidence === "high")) {
     throw new Error("OpenAI 가설 검증 실패");
   }
-  for (const value of [report.title, report.summary, report.problem, report.impact, ...report.likelyCauses, ...report.actions, ...report.unknowns]) {
+  const renderedAiValues = incident.causeSource === "unresolved"
+    ? [report.problem, report.impact, ...report.likelyCauses, ...report.actions, ...report.unknowns]
+    : [...report.unknowns];
+  for (const value of renderedAiValues) {
     if (/[<>]/.test(value) || /@(channel|here|everyone)/i.test(value) || SENSITIVE_OUTPUT.test(value) ||
         [...value].some((character) => character.charCodeAt(0) < 32)) {
       throw new Error("OpenAI 응답 Slack 안전성 검증 실패");

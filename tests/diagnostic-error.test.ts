@@ -14,6 +14,8 @@ describe("리포트 오류 진단", () => {
   it.each([
     [new SyntaxError("bad json"), "response_json_invalid"],
     [new Error("OpenAI 응답 Incident 구성 검증 실패"), "incident_composition_invalid"],
+    [new Error("OpenAI 응답 중요도 검증 실패"), "severity_mismatch"],
+    [new Error("OpenAI 응답 건수 검증 실패"), "event_count_mismatch"],
     [new Error("OpenAI 응답 근거 검증 실패"), "evidence_mismatch"],
     [new Error("OpenAI 가설 검증 실패"), "hypothesis_policy_invalid"],
     [new Error("OpenAI 응답 Slack 안전성 검증 실패"), "output_safety_invalid"]

@@ -31,6 +31,8 @@ function classify(error: Error, status: number | undefined): string {
   if (error.name === "ZodError") return "response_schema_invalid";
   if (error instanceof SyntaxError) return "response_json_invalid";
   if (error.message.includes("Incident 구성")) return "incident_composition_invalid";
+  if (error.message.includes("중요도 검증")) return "severity_mismatch";
+  if (error.message.includes("건수 검증")) return "event_count_mismatch";
   if (error.message.includes("근거 검증")) return "evidence_mismatch";
   if (error.message.includes("가설 검증")) return "hypothesis_policy_invalid";
   if (error.message.includes("Slack 안전성")) return "output_safety_invalid";
