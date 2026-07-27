@@ -11,8 +11,10 @@ export const DetectorRuleSchema = z.object({
   knownCause: z.string().min(1).max(300).refine(safeText),
   recommendedActions: z.array(z.string().min(1).max(300).refine(safeText)).min(1).max(10),
   warningThreshold: z.number().int().positive().optional(),
-  criticalThreshold: z.number().int().positive().optional()
-}).strict().refine((rule) => (rule.warningThreshold ?? 5) < (rule.criticalThreshold ?? 20), "임계값 순서 오류");
+  criticalThreshold: z.number().int().positive().optional(),
+  excludeFromDailyReport: z.boolean().optional()
+}).strict().refine((rule) => rule.criticalThreshold === undefined ||
+  (rule.warningThreshold ?? 20) < rule.criticalThreshold, "임계값 순서 오류");
 
 export const DetectorRulesSchema = z.array(DetectorRuleSchema).max(100);
 export const parseDetectorRules = (value: unknown) => DetectorRulesSchema.parse(value);

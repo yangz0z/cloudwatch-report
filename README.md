@@ -7,18 +7,21 @@ AWS CloudWatch Logs의 구조화된 오류를 매일 집계하고, 결정적 규
 ## 동작 방식
 
 1. EventBridge Scheduler가 매일 09:00 KST에 Lambda 실행
-2. Logs Insights가 전날의 구조화된 `ERROR`·`FATAL` 이벤트를 안전한 필드로만 집계
-3. `service + provider + operation + endpoint + errorCode`별 Incident 생성
-4. 외부에서 주입한 Detector Rule로 known cause, 권장 조치, 심각도 임계값 적용
-5. OpenAI Structured Outputs로 한국어 문장 생성 후 원 Incident와 재검증
-6. AI 호출 또는 검증 실패 시 결정적 fallback 리포트 전송
-7. Scheduler와 Lambda 비동기 호출의 자동 재시도를 끄고 매일 한 번만 예약 시도
+2. Logs Insights가 전날과 직전 7일의 구조화된 `ERROR`·`FATAL` 이벤트를 안전한 필드로만 집계
+3. `service + provider + operation + endpoint + errorCode`별 Incident와 7일 일평균 생성
+4. Fatal·고위험 식별자·증가율·빈도를 결정적으로 평가해 상위 3개 선별
+5. 외부에서 주입한 Detector Rule로 known cause, 권장 조치, 심각도 임계값 적용
+6. OpenAI Structured Outputs로 한국어 문장 생성 후 원 Incident와 재검증
+7. AI 호출 또는 검증 실패 시 결정적 fallback 리포트 전송
+8. Scheduler와 Lambda 비동기 호출의 자동 재시도를 끄고 매일 한 번만 예약 시도
+
+일일 선별은 특정 공급자나 오류 코드에 종속되지 않는다. 기본적으로 동일 오류 20건 이상을 Warning으로 보고하며, 7일 일평균보다 3배 이상 증가한 5건 이상의 오류도 Warning으로 올린다. `Fatal`, 7일 평균보다 5배 이상 증가한 10건 이상의 오류, 또는 안전하게 정규화된 식별자에서 데이터 손상·보안·deadlock·spool/quarantine 실패와 같은 고위험 신호가 확인되면 Critical로 판정한다. 고위험 신호·증가율·빈도 점수 순으로 상위 3건만 상세 보고하고, 나머지는 Critical·Warning 후보 수와 제외·후순위 건수로 표시한다. 임계값과 명시적 노이즈 제외는 SSM Detector Rule에서 오류별로 조정할 수 있다. OpenAI는 선별이나 심각도 판정을 하지 않고 선택된 Incident를 문장화하는 역할만 담당한다.
 
 CloudWatch 원문, stack trace, request/response body, 사용자 식별자 및 credential은 OpenAI나 Slack으로 전달하지 않는다.
 
 ## 기대하는 구조화 로그
 
-애플리케이션 로그에는 다음과 같은 비식별 필드를 제공해야 한다. 예시는 모두 가상 데이터다. 현재 쿼리는 OpenTelemetry/Serilog 로그와의 호환을 위해 `service.name`, `frontend.service.name`, `error.classification`, `integration.name`, `event.name` 및 일부 snake_case 별칭을 읽는다. 요청 경로는 사용자 식별 정보 유출을 막기 위해 조회하지 않고 `/redacted`로 집계한다.
+애플리케이션 로그에는 다음과 같은 비식별 필드를 제공해야 한다. 예시는 모두 가상 데이터다. 현재 쿼리는 OpenTelemetry/Serilog 로그와의 호환을 위해 `service.name`, `frontend.service.name`, `error.classification`, `integration.name`, `event.name` 및 일부 snake_case 별칭을 읽는다. JSON의 `@l`은 Logs Insights 자동 발견 필드명 `@@l`로 조회한다. 식별자는 허용 문자만 남기고, 요청 경로는 사용자 식별 정보 유출을 막기 위해 조회하지 않고 `/redacted`로 집계한다.
 
 ```json
 {
@@ -130,14 +133,17 @@ Slack 공식 [앱 설정 가이드](https://docs.slack.dev/app-management/quicks
       "knownCause": "가상 upstream의 응답 지연",
       "recommendedActions": ["가상 provider 상태 확인"],
       "warningThreshold": 5,
-      "criticalThreshold": 20
+      "criticalThreshold": 20,
+      "excludeFromDailyReport": false
     }
 ]
 ```
 
 AWS 공식 문서의 [Parameter Store parameter 생성 방법](https://docs.aws.amazon.com/systems-manager/latest/userguide/param-create-cli.html)에 따라 Console 또는 AWS CLI로 생성할 수 있다. 현재 앱은 `String` parameter만 지원한다. 규칙을 비밀로 취급해야 한다면 별도 설계로 `SecureString`, `WithDecryption`, 제한된 KMS 복호화 권한을 함께 추가해야 한다.
 
-Detector Rule의 원인·조치와 구조화 로그의 service·provider·operation·endpoint·errorCode는 OpenAI 및 Slack으로 전달된다. 외부 공유 승인을 받은 비민감 값만 사용하고, 내부 hostname·사용자 ID·credential·자유 형식 오류 원문을 넣지 않는다.
+반복되지만 운영 알림이 필요 없는 오류는 해당 규칙에 `"excludeFromDailyReport": true`를 지정한다. 단, `Fatal`은 제외 규칙보다 우선해 항상 보고 후보에 포함한다. 이름에 `test`나 `health`가 포함됐다는 이유만으로 자동 제외하지 않으므로, 실제 장애가 조용히 숨겨지는 것을 방지한다.
+
+Detector Rule의 원인·조치, 구조화 로그의 service·provider·operation·endpoint·errorCode, 발생 건수, 7일 일평균과 증가율은 OpenAI 및 Slack으로 전달된다. 외부 공유 승인을 받은 비민감 운영 정보만 사용하고, 내부 hostname·사용자 ID·credential·자유 형식 오류 원문을 넣지 않는다. operation은 애플리케이션이 통제하는 `event.name`/`event_name`만 사용하며 SourceContext, ActionName, 원문 메시지는 조회하지 않는다.
 
 ### Lambda 환경변수
 
@@ -171,9 +177,12 @@ Lambda가 VPC에 연결되어 있다면 OpenAI와 Slack API 호출을 위한 NAT
 
 ## 범위와 제약
 
-- 기본 쿼리는 최대 100개 오류 집계를 반환
+- 기본 쿼리는 Fatal을 우선해 최대 10,000개 오류 집계를 반환
+- 7일 일평균 조회 때문에 매일 전날 1일과 이전 7일 구간을 각각 한 번씩 스캔하며, 조회 범위 기준 기존 1일 집계보다 스캔량과 비용이 약 8배까지 증가할 수 있음
+- baseline 조회 실패 시 현재일 절대 빈도·Fatal·고위험 식별자만으로 리포트를 계속 생성하고 수집 실패를 Slack 요약에 표시
+- 빈도·증가율·Fatal·고위험 식별자·Detector Rule을 결정적으로 평가하고 상위 3개 Incident만 상세 보고
 - 미등록 오류는 `원인 미확정`으로 표시
-- 여러 Incident는 Critical, Warning, Info 및 발생 건수 순으로 정렬
+- 여러 Incident는 고위험 신호, 7일 증가율, 발생 건수를 조합한 결정적 점수 순으로 정렬
 - Scheduler 전달 및 Lambda 비동기 실행의 자동 재시도는 0회로 설정
 - Slack의 HTTP 429 응답에 대한 짧은 요청 단위 재시도와 OpenAI 실패 시 fallback은 유지
 - 수동 재실행이나 AWS 서비스의 at-least-once 전달로 같은 날짜가 다시 호출되면 Slack 메시지가 중복될 수 있음

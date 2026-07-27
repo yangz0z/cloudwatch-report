@@ -6,16 +6,16 @@ import type { EventAggregate } from "../domain/incident.js";
 import type { ReportWindow } from "../domain/report-window.js";
 
 export const CLOUDWATCH_QUERY = `fields @timestamp,
-  coalesce(\`service.name\`, \`frontend.service.name\`, "unknown-service") as service,
-  coalesce(\`error.classification\`, error_classification, "unclassified-error") as category,
-  coalesce(\`integration.name\`, integration_name, "internal") as provider,
-  coalesce(\`event.name\`, event_name, ActionName, "unclassified-operation") as operation,
+  regex_replace(coalesce(\`service.name\`, \`frontend.service.name\`, "unknown-service"), "[^A-Za-z0-9._:-]", "_") as service,
+  regex_replace(coalesce(\`error.classification\`, error_classification, "unclassified-error"), "[^A-Za-z0-9._:-]", "_") as category,
+  regex_replace(coalesce(\`integration.name\`, integration_name, "internal"), "[^A-Za-z0-9._:-]", "_") as provider,
+  regex_replace(coalesce(\`event.name\`, event_name, "unclassified-operation"), "[^A-Za-z0-9._:-]", "_") as operation,
   "/redacted" as endpoint,
-  coalesce(\`error.classification\`, error_classification, "UNCLASSIFIED_ERROR") as errorCode
-| filter @l in ["Error", "Fatal"] or ispresent(\`error.classification\`) or ispresent(error_classification) or ispresent(\`integration.failure\`) or ispresent(integration_failure)
-| stats count(*) as failureCount, min(@timestamp) as firstSeen, max(@timestamp) as lastSeen by service, category, provider, operation, endpoint, errorCode
-| sort failureCount desc
-| limit 100`;
+  regex_replace(coalesce(\`error.classification\`, error_classification, "UNCLASSIFIED_ERROR"), "[^A-Za-z0-9._:-]", "_") as errorCode
+| filter toupper(@@l) in ["ERROR", "FATAL"] or ispresent(\`error.classification\`) or ispresent(error_classification) or ispresent(\`integration.failure\`) or ispresent(integration_failure)
+| stats count(*) as failureCount, sum(if(toupper(@@l) = "FATAL", 1, 0)) as fatalCount, min(@timestamp) as firstSeen, max(@timestamp) as lastSeen by service, category, provider, operation, endpoint, errorCode
+| sort fatalCount desc, failureCount desc
+| limit 10000`;
 
 export class CloudWatchLogsReader implements LogsReader {
   constructor(
@@ -49,7 +49,10 @@ function parseResult(fields: readonly { field?: string | undefined; value?: stri
   const values = Object.fromEntries(fields.flatMap(({ field, value }) => field && value ? [[field, value]] : []));
   const count = Number(values.failureCount);
   if (!Number.isInteger(count) || count < 1) throw new Error("Logs Insights 집계값 오류");
+  const fatalCount = Number(values.fatalCount);
+  if (!Number.isInteger(fatalCount) || fatalCount < 0 || fatalCount > count) throw new Error("Logs Insights Fatal 집계값 오류");
   return {
+    level: fatalCount > 0 ? "fatal" : "error",
     service: required(values.service, "service"), category: required(values.category, "category"),
     provider: required(values.provider, "provider"), operation: required(values.operation, "operation"),
     endpoint: required(values.endpoint, "endpoint"), errorCode: required(values.errorCode, "errorCode"), count,
@@ -63,7 +66,9 @@ function required(value: string | undefined, name: string): string {
 }
 
 function toKst(value: string | undefined): string {
-  const time = Date.parse(required(value, "시각"));
+  const raw = required(value, "시각").replace(" ", "T");
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw) ? raw : `${raw}Z`;
+  const time = Date.parse(normalized);
   if (!Number.isFinite(time)) throw new Error("Logs Insights 시각 오류");
   return new Date(time + 9 * 3_600_000).toISOString().replace("Z", "+09:00");
 }

@@ -12,20 +12,28 @@ describe("CloudWatch Logs 어댑터", () => {
       .mockResolvedValueOnce({ queryId: "query-1" })
       .mockResolvedValueOnce({ status: "Running" })
       .mockResolvedValueOnce({ status: "Complete", results: [[
+        { field: "fatalCount", value: "0" },
         { field: "service", value: "example-service" }, { field: "category", value: "database" },
         { field: "provider", value: "example-db" }, { field: "operation", value: "read_items" },
         { field: "endpoint", value: "/v1/items" }, { field: "errorCode", value: "QUERY_TIMEOUT" },
-        { field: "failureCount", value: "42" }, { field: "firstSeen", value: "2030-01-13T16:00:00Z" },
+        { field: "failureCount", value: "42" }, { field: "firstSeen", value: "2030-01-13 16:00:00.000" },
         { field: "lastSeen", value: "2030-01-13T17:00:00Z" }
       ]] });
     const reader = new CloudWatchLogsReader({ send } as never, ["/example/app"], vi.fn());
     await expect(reader.readEvents(windowForReportDate("2030-01-14"))).resolves.toEqual([expect.objectContaining({
-      service: "example-service", errorCode: "QUERY_TIMEOUT", count: 42
+      service: "example-service", errorCode: "QUERY_TIMEOUT", count: 42,
+      firstSeenKst: "2030-01-14T01:00:00.000+09:00"
     })]);
     const queryInput = send.mock.calls[0]?.[0].input;
-    expect(queryInput.queryString).toContain("coalesce(`service.name`, `frontend.service.name`");
-    expect(queryInput.queryString).toContain("coalesce(`integration.name`, integration_name");
-    expect(queryInput.queryString).toContain("coalesce(`event.name`, event_name, ActionName");
+    expect(queryInput.queryString).toContain("regex_replace(coalesce(`service.name`, `frontend.service.name`");
+    expect(queryInput.queryString).toContain("regex_replace(coalesce(`integration.name`, integration_name");
+    expect(queryInput.queryString).toContain("regex_replace(coalesce(`event.name`, event_name");
+    expect(queryInput.queryString).not.toContain("SourceContext");
+    expect(queryInput.queryString).not.toContain("ActionName");
+    expect(queryInput.queryString).toContain('sum(if(toupper(@@l) = "FATAL", 1, 0)) as fatalCount');
+    expect(queryInput.queryString).toContain('toupper(@@l) in ["ERROR", "FATAL"]');
+    expect(queryInput.queryString).toContain("sort fatalCount desc, failureCount desc");
+    expect(queryInput.queryString).toContain("limit 10000");
     expect(queryInput.queryString).toContain("ispresent(`integration.failure`)");
     expect(queryInput.queryString).toContain("ispresent(integration_failure)");
     expect(queryInput.queryString).toContain('"/redacted" as endpoint');
@@ -47,6 +55,26 @@ describe("CloudWatch Logs 어댑터", () => {
     const send = vi.fn().mockResolvedValueOnce({ queryId: "q" }).mockResolvedValueOnce({ status: "Complete", results: [] });
     await expect(new CloudWatchLogsReader({ send } as never, ["/example/app"]).readEvents(windowForReportDate("2030-01-14")))
       .resolves.toEqual([]);
+  });
+
+  it("Fatal 집계를 로그 수준으로 변환하고 잘못된 건수를 거부", async () => {
+    const result = (fatalCount: string, failureCount = "2") => [[
+      { field: "fatalCount", value: fatalCount }, { field: "service", value: "example-service" },
+      { field: "category", value: "database" }, { field: "provider", value: "internal" },
+      { field: "operation", value: "read_items" }, { field: "endpoint", value: "/redacted" },
+      { field: "errorCode", value: "QUERY_TIMEOUT" }, { field: "failureCount", value: failureCount },
+      { field: "firstSeen", value: "2030-01-13T16:00:00Z" },
+      { field: "lastSeen", value: "2030-01-13T17:00:00Z" }
+    ]];
+    const complete = vi.fn().mockResolvedValueOnce({ queryId: "q" })
+      .mockResolvedValueOnce({ status: "Complete", results: result("1") });
+    await expect(new CloudWatchLogsReader({ send: complete } as never, ["/example/app"])
+      .readEvents(windowForReportDate("2030-01-14"))).resolves.toEqual([expect.objectContaining({ level: "fatal" })]);
+
+    const invalid = vi.fn().mockResolvedValueOnce({ queryId: "q" })
+      .mockResolvedValueOnce({ status: "Complete", results: result("3") });
+    await expect(new CloudWatchLogsReader({ send: invalid } as never, ["/example/app"])
+      .readEvents(windowForReportDate("2030-01-14"))).rejects.toThrow("Fatal 집계값");
   });
 });
 

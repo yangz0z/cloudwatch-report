@@ -6,6 +6,7 @@ import { windowForReportDate } from "../domain/report-window.js";
 import { DeterministicReportWriter, FixtureLogsReader, JsonPublisher } from "./adapters.js";
 
 const EventSchema = z.object({
+  level: z.enum(["error", "fatal"]).optional(),
   service: z.string(), category: z.string(), provider: z.string(), operation: z.string(), endpoint: z.string(),
   errorCode: z.string(), count: z.number().int().positive(), firstSeenKst: z.string(), lastSeenKst: z.string()
 }).strict();

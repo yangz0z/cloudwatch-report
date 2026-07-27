@@ -59,6 +59,9 @@ export class OpenAiReportWriter implements ReportWriter {
       }
     }
     const label = report.severity === "critical" ? "🚨 Critical" : report.severity === "warning" ? "⚠️ Warning" : "ℹ️ Info";
-    return `${label} — ${report.title}\n\n${report.summary}\n\n• 오류 원인: ${report.cause}\n• 사용자 영향: ${report.impact}\n• 권장 조치: ${report.actions.join(", ")}\n\n근거: 동일한 구조화 오류 ${report.eventCount}건`;
+    return `${label} — ${report.title}\n\n${report.summary}\n\n` +
+      `• 7일 일평균: ${incident.baselineDailyAverage}건 / 전일 증가: ${incident.increaseRatio}배\n` +
+      `• 오류 원인: ${report.cause}\n• 사용자 영향: ${report.impact}\n` +
+      `• 권장 조치: ${report.actions.join(", ")}\n\n근거: 동일한 구조화 오류 ${report.eventCount}건`;
   }
 }

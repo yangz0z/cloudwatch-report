@@ -1,5 +1,6 @@
 [
   {
+    "level": "error",
     "service": "example-service",
     "category": "external_dependency",
     "provider": "example-provider",
