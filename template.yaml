@@ -53,12 +53,10 @@ Resources:
       BuildMethod: esbuild
       BuildProperties:
         EntryPoints: [src/handler.ts]
-        Format: esm
+        Format: cjs
         Minify: true
         Sourcemap: false
         Target: es2022
-        OutExtension:
-          - .js=.mjs
         Loader:
           - .md=text
     Properties:

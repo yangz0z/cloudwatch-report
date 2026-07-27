@@ -9,6 +9,7 @@
   "scripts": {
     "build": "esbuild src/handler.ts src/local-cli.ts --bundle --platform=node --target=node22 --format=esm --outdir=dist --loader:.md=text",
     "local": "npm run build --silent && node dist/local-cli.js",
+    "sam:check": "sam build --no-cached && node scripts/verify-sam-artifact.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
