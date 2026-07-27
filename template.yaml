@@ -47,19 +47,6 @@ Globals:
     Tracing: Active
 
 Resources:
-  ReportRuns:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: reportDate
-          AttributeType: S
-      KeySchema:
-        - AttributeName: reportDate
-          KeyType: HASH
-      SSESpecification:
-        SSEEnabled: true
-
   DailyReportFunction:
     Type: AWS::Serverless::Function
     Metadata:
@@ -73,10 +60,12 @@ Resources:
     Properties:
       Handler: handler.handler
       ReservedConcurrentExecutions: 1
+      EventInvokeConfig:
+        MaximumEventAgeInSeconds: 60
+        MaximumRetryAttempts: 0
       Environment:
         Variables:
           LOG_GROUP_NAMES: !Ref LogGroupNames
-          RUN_TABLE_NAME: !Ref ReportRuns
           SECRET_ID: !Ref SecretId
           SLACK_CHANNEL_ID: !Ref SlackChannelId
           DETECTOR_RULES_PARAMETER_NAME: !Ref DetectorRulesParameterName
@@ -87,9 +76,11 @@ Resources:
           Properties:
             ScheduleExpression: cron(0 9 * * ? *)
             ScheduleExpressionTimezone: Asia/Seoul
+            FlexibleTimeWindow:
+              Mode: "OFF"
             RetryPolicy:
-              MaximumRetryAttempts: 2
-              MaximumEventAgeInSeconds: 3600
+              MaximumRetryAttempts: 0
+              MaximumEventAgeInSeconds: 60
       Policies:
         - Statement:
             - Effect: Allow
@@ -101,9 +92,6 @@ Resources:
             - Effect: Allow
               Action: ssm:GetParameter
               Resource: !Ref DetectorRulesParameterArn
-            - Effect: Allow
-              Action: [dynamodb:PutItem, dynamodb:UpdateItem]
-              Resource: !GetAtt ReportRuns.Arn
 
   DailyReportFailureAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -128,5 +116,3 @@ Conditions:
 Outputs:
   FunctionName:
     Value: !Ref DailyReportFunction
-  RunTableName:
-    Value: !Ref ReportRuns

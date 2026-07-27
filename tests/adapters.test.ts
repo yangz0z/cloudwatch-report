@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CloudWatchLogsReader } from "../src/adapters/cloudwatch-logs-reader.js";
-import { DynamoDbRunStore } from "../src/adapters/dynamodb-run-store.js";
 import { loadSecrets } from "../src/adapters/secrets.js";
 import { loadDetectorRules } from "../src/adapters/parameter-store.js";
 import { SlackPublisher } from "../src/adapters/slack-publisher.js";
@@ -51,25 +50,9 @@ describe("CloudWatch Logs 어댑터", () => {
   });
 });
 
-describe("DynamoDB 실행 저장소", () => {
-  it("실행권 획득 후 발송 상태 기록", async () => {
-    const send = vi.fn().mockResolvedValue({});
-    const store = new DynamoDbRunStore({ send } as never, "runs");
-    await expect(store.acquire("2030-01-14")).resolves.toBe(true);
-    await store.markSent("2030-01-14", "123.456");
-    await store.markFailed("2030-01-15");
-    expect(send).toHaveBeenCalledTimes(3);
-  });
-
-  it("조건부 쓰기 충돌을 중복 실행으로 처리", async () => {
-    const send = vi.fn().mockRejectedValue(Object.assign(new Error("duplicate"), { name: "ConditionalCheckFailedException" }));
-    await expect(new DynamoDbRunStore({ send } as never, "runs").acquire("2030-01-14")).resolves.toBe(false);
-  });
-});
-
 describe("설정과 비밀값", () => {
   it("환경변수와 Secrets Manager JSON을 검증", async () => {
-    expect(loadConfig({ LOG_GROUP_NAMES: "/example/app", RUN_TABLE_NAME: "runs", SECRET_ID: "secret",
+    expect(loadConfig({ LOG_GROUP_NAMES: "/example/app", SECRET_ID: "secret",
       SLACK_CHANNEL_ID: "C123", DETECTOR_RULES_PARAMETER_NAME: "/example/rules" }).AWS_REGION)
       .toBe("ap-northeast-2");
     const send = vi.fn().mockResolvedValue({ SecretString: JSON.stringify({

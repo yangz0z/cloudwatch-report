@@ -3,7 +3,7 @@ import { z } from "zod";
 import { generateDailyReport } from "../application/generate-daily-report.js";
 import { parseDetectorRules } from "../domain/detector-rules.js";
 import { windowForReportDate } from "../domain/report-window.js";
-import { DeterministicReportWriter, FixtureLogsReader, JsonPublisher, MemoryRunStore } from "./adapters.js";
+import { DeterministicReportWriter, FixtureLogsReader, JsonPublisher } from "./adapters.js";
 
 const EventSchema = z.object({
   service: z.string(), category: z.string(), provider: z.string(), operation: z.string(), endpoint: z.string(),
@@ -36,7 +36,7 @@ export async function runLocal(options: LocalOptions, write: (line: string) => v
   const events = z.array(EventSchema).parse(eventsValue);
   const detectorRules = parseDetectorRules(rulesValue);
   return generateDailyReport({ reportDate: options.reportDate }, {
-    runStore: new MemoryRunStore(), logsReader: new FixtureLogsReader(events),
+    logsReader: new FixtureLogsReader(events),
     reportWriter: new DeterministicReportWriter(), publisher: new JsonPublisher(write), detectorRules
   });
 }

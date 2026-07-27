@@ -12,7 +12,7 @@ AWS CloudWatch Logs의 구조화된 오류를 매일 집계하고, 결정적 규
 4. 외부에서 주입한 Detector Rule로 known cause, 권장 조치, 심각도 임계값 적용
 5. OpenAI Structured Outputs로 한국어 문장 생성 후 원 Incident와 재검증
 6. AI 호출 또는 검증 실패 시 결정적 fallback 리포트 전송
-7. DynamoDB 조건부 쓰기와 lease로 날짜별 중복 실행 방지
+7. Scheduler와 Lambda 비동기 호출의 자동 재시도를 끄고 매일 한 번만 예약 시도
 
 CloudWatch 원문, stack trace, request/response body, 사용자 식별자 및 credential은 OpenAI나 Slack으로 전달하지 않는다.
 
@@ -146,7 +146,6 @@ SAM이 배포 시 다음 값을 Lambda에 주입한다.
 - `SLACK_CHANNEL_ID`: 대상 channel ID
 - `DETECTOR_RULES_PARAMETER_NAME`: SSM parameter 이름
 - `LOG_GROUP_NAMES`: 조회할 로그 그룹 이름
-- `RUN_TABLE_NAME`: 생성된 DynamoDB 테이블 이름
 - `OPENAI_MODEL`: 사용할 OpenAI 모델
 
 ## 배포
@@ -175,7 +174,10 @@ Lambda가 VPC에 연결되어 있다면 OpenAI와 Slack API 호출을 위한 NAT
 - 기본 쿼리는 최대 100개 오류 집계를 반환
 - 미등록 오류는 `원인 미확정`으로 표시
 - 여러 Incident는 Critical, Warning, Info 및 발생 건수 순으로 정렬
-- Slack 성공 직후 DynamoDB 상태 기록 전에 실행이 중단되는 극단적 구간에는 중복 가능성이 남음
+- Scheduler 전달 및 Lambda 비동기 실행의 자동 재시도는 0회로 설정
+- Slack의 HTTP 429 응답에 대한 짧은 요청 단위 재시도와 OpenAI 실패 시 fallback은 유지
+- 수동 재실행이나 AWS 서비스의 at-least-once 전달로 같은 날짜가 다시 호출되면 Slack 메시지가 중복될 수 있음
+- 실행 실패 시 해당 날짜의 리포트는 자동 재시도되지 않으며 실패 Alarm으로만 확인
 - CloudWatch Alarm 이력 병합과 실시간 경보는 현재 범위에 포함되지 않음
 
 ## 공개 저장소 안전 원칙

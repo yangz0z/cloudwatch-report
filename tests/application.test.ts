@@ -7,7 +7,6 @@ const aggregate = {
   firstSeenKst: "2030-01-14T01:00:00+09:00", lastSeenKst: "2030-01-14T02:00:00+09:00"
 };
 const base = () => ({
-  runStore: { acquire: vi.fn().mockResolvedValue(true), markSent: vi.fn(), markFailed: vi.fn() },
   logsReader: { readEvents: vi.fn().mockResolvedValue([aggregate]) },
   reportWriter: { write: vi.fn().mockResolvedValue("가상 리포트") }, publisher: { publish: vi.fn().mockResolvedValue("123.456") },
   detectorRules: []
@@ -21,11 +20,11 @@ describe("일일 리포트 유스케이스", () => {
     expect(result).toMatchObject({ status: "sent", fallbackCount: 1 });
     expect(dependencies.publisher.publish.mock.calls[0]?.[0]).toContain("QUERY_TIMEOUT");
   });
-  it("이미 발송된 날짜는 외부 호출 없이 종료", async () => {
+  it("같은 날짜를 수동 재실행하면 다시 전송", async () => {
     const dependencies = base();
-    dependencies.runStore.acquire.mockResolvedValue(false);
-    await expect(generateDailyReport({ reportDate: "2030-01-14" }, dependencies)).resolves.toMatchObject({ status: "skipped" });
-    expect(dependencies.logsReader.readEvents).not.toHaveBeenCalled();
+    await generateDailyReport({ reportDate: "2030-01-14" }, dependencies);
+    await generateDailyReport({ reportDate: "2030-01-14" }, dependencies);
+    expect(dependencies.publisher.publish).toHaveBeenCalledTimes(2);
   });
   it("오류가 없으면 정상 메시지를 전송", async () => {
     const dependencies = base();
@@ -33,10 +32,9 @@ describe("일일 리포트 유스케이스", () => {
     await generateDailyReport({ reportDate: "2030-01-14" }, dependencies);
     expect(dependencies.publisher.publish.mock.calls[0]?.[0]).toContain("구조화된 중요 오류가 탐지되지 않음");
   });
-  it("발송 실패를 기록하고 오류를 전파", async () => {
+  it("발송 오류를 전파", async () => {
     const dependencies = base();
     dependencies.publisher.publish.mockRejectedValue(new Error("publish failed"));
     await expect(generateDailyReport({ reportDate: "2030-01-14" }, dependencies)).rejects.toThrow("publish failed");
-    expect(dependencies.runStore.markFailed).toHaveBeenCalled();
   });
 });
